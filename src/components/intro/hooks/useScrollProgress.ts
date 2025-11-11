@@ -11,6 +11,7 @@ export function useScrollProgress(containerRef: React.RefObject<HTMLElement>, op
   const [scrollProgress, setScrollProgress] = useState(0);
   const hasCompletedRef = useRef(false);
   const lastScrollRef = useRef(0);
+  const rafIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
@@ -25,8 +26,8 @@ export function useScrollProgress(containerRef: React.RefObject<HTMLElement>, op
       const relativeScroll = Math.max(0, scrollY - containerTop);
       const progress = Math.min(Math.max(0, relativeScroll / containerHeight), 1);
 
-      // Only update if progress changed significantly
-      if (Math.abs(progress - lastScrollRef.current) > 0.01) {
+      // Only update if progress changed significantly (reduced threshold for better performance)
+      if (Math.abs(progress - lastScrollRef.current) > 0.005) {
         lastScrollRef.current = progress;
         setScrollProgress(progress);
 
@@ -38,18 +39,27 @@ export function useScrollProgress(containerRef: React.RefObject<HTMLElement>, op
       }
     };
 
-    let rafId: number;
-    const update = () => {
-      calculateProgress();
-      rafId = requestAnimationFrame(update);
+    // Use throttled scroll listener with RAF for better performance
+    let ticking = false;
+    const handleScroll = () => {
+      if (!ticking) {
+        rafIdRef.current = requestAnimationFrame(() => {
+          calculateProgress();
+          ticking = false;
+        });
+        ticking = true;
+      }
     };
-    rafId = requestAnimationFrame(update);
 
-    window.addEventListener("scroll", calculateProgress, { passive: true });
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    // Initial calculation
+    calculateProgress();
 
     return () => {
-      cancelAnimationFrame(rafId);
-      window.removeEventListener("scroll", calculateProgress);
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+      window.removeEventListener("scroll", handleScroll);
     };
   }, [containerRef, onComplete, enabled]);
 

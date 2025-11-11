@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -6,76 +6,64 @@ type EarthMaterialProps = {
   scrollProgress: number;
 };
 
-const vertexShader = `
-  varying vec3 vWorldPosition;
-  varying vec3 vNormal;
-  void main() {
-    vWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
-    vNormal = normalize(normalMatrix * normal);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-const fragmentShader = `
-  uniform float time;
-  uniform float opacity;
-  uniform float scrollProgress;
-  varying vec3 vWorldPosition;
-  varying vec3 vNormal;
-  
-  void main() {
-    vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
-    vec3 normal = normalize(vNormal);
-    
-    // Fresnel effect for atmosphere - intensity increases with scroll
-    float fresnel = pow(1.0 - dot(viewDirection, normal), 2.0);
-    float atmosphereIntensity = 0.25 + scrollProgress * 0.3;
-    
-    // Base color (ocean blue)
-    vec3 baseColor = vec3(0.1, 0.3, 0.6);
-    
-    // Simplified noise for better performance
-    float noise = sin(vWorldPosition.x * 0.3 + time * 0.05) * 
-                 cos(vWorldPosition.y * 0.3 + time * 0.05);
-    vec3 continentColor = mix(vec3(0.2, 0.5, 0.2), vec3(0.3, 0.4, 0.2), noise * 0.5 + 0.5);
-    
-    // Mix based on position
-    float continentMask = smoothstep(0.3, 0.7, noise * 0.5 + 0.5);
-    vec3 finalColor = mix(baseColor, continentColor, continentMask * 0.3);
-    
-    // Add atmospheric glow - intensity increases with scroll
-    finalColor += vec3(0.3, 0.5, 0.8) * fresnel * atmosphereIntensity;
-    
-    // Simplified specular
-    vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));
-    float specular = pow(max(dot(reflect(-lightDir, normal), viewDirection), 0.0), 16.0);
-    finalColor += vec3(1.0) * specular * 0.3;
-    
-    gl_FragColor = vec4(finalColor, opacity);
-  }
-`;
-
 export function EarthMaterial({ scrollProgress }: EarthMaterialProps) {
   const material = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      uniforms: {
-        time: { value: 0 },
-        opacity: { value: 1 },
-        scrollProgress: { value: 0 },
-      },
-      vertexShader,
-      fragmentShader,
-      transparent: true,
+    // Create gradient texture for more realistic Earth appearance
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 128;
+    const ctx = canvas.getContext("2d");
+    
+    if (ctx) {
+      // Create ocean gradient
+      const oceanGrad = ctx.createLinearGradient(0, 0, 0, 128);
+      oceanGrad.addColorStop(0, "#1e3a8a"); // Deep ocean
+      oceanGrad.addColorStop(0.5, "#2563eb"); // Medium ocean
+      oceanGrad.addColorStop(1, "#1e40af"); // Shallow ocean
+      
+      ctx.fillStyle = oceanGrad;
+      ctx.fillRect(0, 0, 256, 128);
+      
+      // Add some continent-like shapes
+      ctx.fillStyle = "#166534"; // Green
+      ctx.beginPath();
+      ctx.ellipse(64, 40, 30, 15, 0, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.beginPath();
+      ctx.ellipse(180, 70, 25, 18, 0.3, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.beginPath();
+      ctx.ellipse(120, 100, 20, 12, -0.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    
+    return new THREE.MeshStandardMaterial({
+      map: texture,
+      emissive: new THREE.Color(0x1e40af),
+      emissiveIntensity: 0.2,
+      metalness: 0.2,
+      roughness: 0.7,
     });
   }, []);
 
-  useFrame((state) => {
-    if (material) {
-      material.uniforms.time.value = state.clock.elapsedTime;
-      material.uniforms.scrollProgress.value = scrollProgress;
+  const materialRef = useRef(material);
+  const lastProgressRef = useRef(-1);
+
+  useFrame(() => {
+    if (materialRef.current) {
+      // Only update if scroll progress changed significantly (increased threshold)
+      if (Math.abs(scrollProgress - lastProgressRef.current) > 0.02) {
+        materialRef.current.emissiveIntensity = 0.2 + scrollProgress * 0.3;
+        lastProgressRef.current = scrollProgress;
+      }
     }
   });
 
   return <primitive object={material} attach="material" />;
 }
-
